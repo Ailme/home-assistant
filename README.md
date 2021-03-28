@@ -1,1 +1,1 @@
-# home-assistant
+# home-assistant components

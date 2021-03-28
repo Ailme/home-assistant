@@ -1,5 +1,3 @@
-"""Cryptography script"""
-
 import pytest
 import hashlib
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
