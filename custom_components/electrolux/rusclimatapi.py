@@ -1,58 +1,72 @@
 """Adds Support for Electrolux Convector"""
 
 import logging
+from aiohttp import ClientSession
 
-from datetime import datetime, timedelta
-import voluptuous as vol
-import json
-from urllib.request import Request, urlopen
-from urllib.error import HTTPError, URLError
-from time import mktime, strptime
-from http.client import HTTPException
-
-from socket import AF_INET, SOCK_DGRAM, SO_REUSEADDR, SOL_SOCKET, socket, timeout
+from homeassistant import exceptions
+from .const import API_LOGIN, LANG
 
 _LOGGER = logging.getLogger(__name__)
 
 
-class RusclimatApi(object):
+class RusclimatApi:
     """ Wrapper class to the Rusclimat API """
 
-    def __init__(self, username, passwotd, host, appcode):
-        self._username = username
-        self._passwotd = passwotd
-        self._host = host
-        self._appcode = appcode
+    _key = None
+    _token = None
+    _server = None
 
-    def _send_request(self, request_path, json_payload):
-        """Send the request to the server"""
+    def __init__(self, session: ClientSession, host):
+        self.session = session
+        self.baseUrl = host
 
-        for i in range(3):
-            try:
-                req = Request(
-                    self._host + request_path,
-                    data=str.encode(json_payload),
-                )
-                with urlopen(req, timeout=60) as result:
-                    resp = json.loads(result.read().decode("utf-8"))
-                    return resp
+    async def login(self, username: str, password: str, appcode: str) -> bool:
+        """Login"""
+        _LOGGER.debug("login")
 
-            except HTTPError as http_err:
-                if http_err.code == 404:
-                    _LOGGER.info("Rusclimat not found: %s Trying to find...", self._host)
-                else:
-                    _LOGGER.error("Rusclimat api error")
-                    continue
-            except HTTPException as http_ex:
-                _LOGGER.info("Rusclimat disconnected %s", str(http_ex))
-            except URLError as url_ex:
-                _LOGGER.info("Rusclimat timeout %s", str(url_ex))
-            except ConnectionResetError as cr_ex:
-                _LOGGER.info("Rusclimat connection reset %s", str(cr_ex))
-            except ConnectionAbortedError as ca_ex:
-                _LOGGER.info("Rusclimat connection abort %s", str(ca_ex))
+        payload = {
+            "login": username,
+            "password": password,
+            "appcode": appcode
+        }
 
-        return None
+        headers = {
+            "lang": LANG,
+            "tcp": "y",
+            "debug": "new'",
+            "Content-Type": "application/json; charset=UTF-8",
+            "Connection": "Keep-Alive",
+            "Accept-Encoding": "gzip",
+            "User-Agent": "okhttp/4.3.1",
+        }
+
+        try:
+            resp = await self.session.post(f"{self.baseUrl}/{API_LOGIN}", json=payload, headers=headers)
+            json = await resp.json()
+        except (Exception, RuntimeError) as e:
+            _LOGGER.exception(f"Login error: {e}")
+            return False
+
+        _LOGGER.debug(json)
+
+        if json is None:
+            _LOGGER.error(f"Login error: {json}")
+            return False
+
+        if json["error_code"] != "0":
+            _LOGGER.error(f"Login error: {json['error_message']}")
+            return False
+
+        self._key = json["result"]['enc_key']
+        self._token = json["result"]["token"]
+        self._server = json["result"]["server"]
+
+        _LOGGER.debug(json["result"])
+
+        return json
+
+    async def _connect(self, fails: int = 0):
+        """Permanent connection loop to Cloud Servers."""
 
     def update(self):
         """Get unit attributes."""
@@ -62,3 +76,11 @@ class RusclimatApi(object):
     @property
     def preset(self):
         return 0
+
+
+class CannotConnect(exceptions.HomeAssistantError):
+    """Error to indicate we cannot connect."""
+
+
+class InvalidAuth(exceptions.HomeAssistantError):
+    """Error to indicate there is invalid auth."""

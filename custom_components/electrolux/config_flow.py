@@ -2,32 +2,20 @@
 import logging
 
 import voluptuous as vol
+import uuid
 
-from homeassistant import config_entries, core, exceptions
+from homeassistant import config_entries, core
+from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
-from .const import DOMAIN, HOST_RUSKLIMAT
+from .const import DOMAIN, HOST_RUSKLIMAT, APPCODE_ELECTROLUX, DEFAULT_NAME
+from .rusclimatapi import RusclimatApi, InvalidAuth, CannotConnect
 
 _LOGGER = logging.getLogger(__name__)
 
 STEP_USER_DATA_SCHEMA = vol.Schema({"username": str, "password": str})
 
 
-class Hub:
-    """Placeholder class to make tests pass.
-
-    TODO Remove this placeholder class and replace with things from your PyPI package.
-    """
-
-    def __init__(self, host):
-        """Initialize."""
-        self.host = host
-
-    async def authenticate(self, username, password) -> bool:
-        """Test if we can authenticate with the host."""
-        return True
-
-
-async def validate_input(hass: core.HomeAssistant, data):
+async def validate_input(hass, data):
     """Validate the user input allows us to connect.
 
     Data has the keys from STEP_USER_DATA_SCHEMA with values provided by the user.
@@ -40,9 +28,11 @@ async def validate_input(hass: core.HomeAssistant, data):
     #     your_validate_func, data["username"], data["password"]
     # )
 
-    hub = Hub(HOST_RUSKLIMAT)
+    session = async_get_clientsession(hass)
+    api = RusclimatApi(session, HOST_RUSKLIMAT)
+    result = await api.login(data["username"], data["password"], APPCODE_ELECTROLUX)
 
-    if not await hub.authenticate(data["username"], data["password"]):
+    if not result:
         raise InvalidAuth
 
     # If you cannot connect:
@@ -51,7 +41,7 @@ async def validate_input(hass: core.HomeAssistant, data):
     # InvalidAuth
 
     # Return info that you want to store in the config entry.
-    return {"title": "Name of the device"}
+    return {"title": "Convector"}
 
 
 class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
@@ -59,7 +49,11 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
     VERSION = 1
 
-    CONNECTION_CLASS = config_entries.CONN_CLASS_UNKNOWN
+    CONNECTION_CLASS = config_entries.CONN_CLASS_CLOUD_POLL
+
+    def __init__(self):
+        """Initialize."""
+        self._unique_id = str(uuid.uuid4())
 
     async def async_step_user(self, user_input=None):
         """Handle the initial step."""
@@ -80,16 +74,9 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             _LOGGER.exception("Unexpected exception")
             errors["base"] = "unknown"
         else:
+            await self.async_set_unique_id(self._unique_id)
             return self.async_create_entry(title=info["title"], data=user_input)
 
         return self.async_show_form(
             step_id="user", data_schema=STEP_USER_DATA_SCHEMA, errors=errors
         )
-
-
-class CannotConnect(exceptions.HomeAssistantError):
-    """Error to indicate we cannot connect."""
-
-
-class InvalidAuth(exceptions.HomeAssistantError):
-    """Error to indicate there is invalid auth."""

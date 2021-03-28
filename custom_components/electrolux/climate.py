@@ -16,7 +16,8 @@ from .rusclimatapi import RusclimatApi
 
 import homeassistant.helpers.config_validation as cv
 
-from homeassistant.core import HomeAssistant
+from homeassistant.helpers.reload import async_setup_reload_service
+from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.components.climate import ClimateEntity, PLATFORM_SCHEMA
 from homeassistant.components.climate.const import (
     SUPPORT_TARGET_TEMPERATURE,
@@ -60,26 +61,40 @@ SUPPORT_FLAGS = SUPPORT_TARGET_TEMPERATURE | SUPPORT_PRESET_MODE
 HA_PRESET_TO_CONVECTOR = {PRESET_COMFORT: 0, PRESET_SLEEP: 1, PRESET_ECO: 2}
 CONVECTOR_PRESET_TO_HA = {v: k for k, v in HA_PRESET_TO_CONVECTOR.items()}
 
-async def async_setup_platform(hass, config, async_add_entities, discovery_info=None):
-    _LOGGER.debug("Component start")
+# async def async_setup_platform(hass, config, async_add_entities, discovery_info=None):
+#     _LOGGER.info(config)
+#
+#     session = async_get_clientsession(hass)
+#     api = RusclimatApi(session, HOST_RUSKLIMAT)
+#
+#     await async_setup_reload_service(hass, DOMAIN, 'climate')
+#     async_add_entities([Convector(api)])
+#
+#     return True
 
-    username = config[CONF_USERNAME]
-    password = config.get(CONF_PASSWORD)
 
-    api = RusclimatApi(username, password, HOST_RUSKLIMAT, APPCODE_ELECTROLUX)
+async def async_setup_entry(hass, config_entry, async_add_devices):
+    _LOGGER.debug("async_setup_entry.climate")
 
-    entities = [Convector(api)]
-    async_add_entities(entities)
+    if config_entry.options != {}:
+        result = config_entry.options
+    else:
+        result = config_entry.data
+    _LOGGER.info("setup entity-config_entry_data=%s", result)
 
-    return True
+    session = async_get_clientsession(hass)
+    api = RusclimatApi(session, HOST_RUSKLIMAT)
+
+    await async_setup_reload_service(hass, DOMAIN, 'climate')
+    async_add_devices([Convector(api)])
 
 
 class Convector(ClimateEntity):
     """Representation of an Climate."""
 
-    def __init__(self, data):
+    def __init__(self, api):
         """Initialize"""
-        self.data = data
+        self._api = api
         self._icon = "mdi:radiator"
         self._name = DEFAULT_NAME
         self._min_temp = DEFAULT_MIN_TEMP
@@ -170,7 +185,7 @@ class Convector(ClimateEntity):
     @property
     def preset_mode(self):
         """Return the current preset mode, e.g., home, away, temp."""
-        return CONVECTOR_PRESET_TO_HA.get(self.data.preset)
+        return CONVECTOR_PRESET_TO_HA.get(self._api.preset)
 
     @property
     def preset_modes(self):
@@ -184,7 +199,7 @@ class Convector(ClimateEntity):
             return
 
         convector_preset = HA_PRESET_TO_CONVECTOR.get(preset_mode, PRESET_COMFORT)
-        status = self.data.set_preset_mode(convector_preset)
+        status = self._api.set_preset_mode(convector_preset)
         if status == 2:
             self._preset = preset_mode
             return
@@ -198,7 +213,7 @@ class Convector(ClimateEntity):
         if target_temp is None:
             return
         else:
-            status = self.data.set_temperature(target_temp)
+            status = self._api.set_temperature(target_temp)
             if status != 2:
                 _LOGGER.error("Request Status: %s", status)
 
