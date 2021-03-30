@@ -1,10 +1,10 @@
 """Adds Support for Electrolux Convector"""
-
+import asyncio
 import logging
+
 from aiohttp import ClientSession
 
-from homeassistant import exceptions
-from .const import API_LOGIN, LANG
+from .const import API_LOGIN, API_SET_DEVICE_PARAMS, LANG
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -12,75 +12,110 @@ _LOGGER = logging.getLogger(__name__)
 class RusclimatApi:
     """ Wrapper class to the Rusclimat API """
 
-    _key = None
-    _token = None
-    _server = None
+    def __init__(self, host: str, username: str, password: str, appcode: str):
+        self._host = host
+        self._username = username
+        self._password = password
+        self._appcode = appcode
+        self._token = None
+        self._data = {}
+        self.session = None
 
-    def __init__(self, session: ClientSession, host):
-        self.session = session
-        self.baseUrl = host
+    def __del__(self):
+        _LOGGER.debug('Destructor called.')
+        self.session.close()
 
-    async def login(self, username: str, password: str, appcode: str) -> bool:
-        """Login"""
-        _LOGGER.debug("login")
+    def create_session(self):
+        self.session = ClientSession()
 
-        payload = {
-            "login": username,
-            "password": password,
-            "appcode": appcode
-        }
+    async def request(self, url: str, payload: dict):
+        if self.session is None or self.session.closed:
+            self.create_session()
 
         headers = {
             "lang": LANG,
-            "tcp": "y",
-            "debug": "new'",
             "Content-Type": "application/json; charset=UTF-8",
             "Connection": "Keep-Alive",
             "Accept-Encoding": "gzip",
             "User-Agent": "okhttp/4.3.1",
         }
 
-        try:
-            resp = await self.session.post(f"{self.baseUrl}/{API_LOGIN}", json=payload, headers=headers)
-            json = await resp.json()
-        except (Exception, RuntimeError) as e:
-            _LOGGER.exception(f"Login error: {e}")
-            return False
+        resp = await self.session.post(f"{self._host}/{url}", json=payload, headers=headers)
+        json = await resp.json()
 
         _LOGGER.debug(json)
 
         if json is None:
-            _LOGGER.error(f"Login error: {json}")
-            return False
-
-        if json["error_code"] != "0":
-            _LOGGER.error(f"Login error: {json['error_message']}")
-            return False
-
-        self._key = json["result"]['enc_key']
-        self._token = json["result"]["token"]
-        self._server = json["result"]["server"]
-
-        _LOGGER.debug(json["result"])
+            _LOGGER.error(f"Request error: json is None")
+            return {}
 
         return json
 
-    async def _connect(self, fails: int = 0):
-        """Permanent connection loop to Cloud Servers."""
+    async def login(self):
+        """Login"""
 
-    def update(self):
-        """Get unit attributes."""
+        payload = {
+            "login": self._username,
+            "password": self._password,
+            "appcode": self._appcode
+        }
 
-        return 1
+        json = await self.request(API_LOGIN, payload)
 
-    @property
-    def preset(self):
-        return 0
+        self._token = json["result"]["token"]
+        self._data = json["result"]["device"]
 
+        return json
 
-class CannotConnect(exceptions.HomeAssistantError):
-    """Error to indicate we cannot connect."""
+    async def update_device_params(self, params: dict):
+        if self._token is None:
+            await self.login()
 
+        payload = {
+            "token": self._token,
+            "device": [params]
+        }
 
-class InvalidAuth(exceptions.HomeAssistantError):
-    """Error to indicate there is invalid auth."""
+        json = await self.request(API_SET_DEVICE_PARAMS, payload)
+
+        return json
+
+    async def set_preset_mode(self, uid: str, mode: int) -> bool:
+        payload = {
+            "uid": uid,
+            "params": {
+                "mode": mode
+            }
+        }
+
+        json = await self.update_device_params(payload)
+
+        return json["result"] == "1"
+
+    async def set_temperature(self, uid: str, temp: int) -> bool:
+        payload = {
+            "uid": uid,
+            "params": {
+                "temp_comfort": temp
+            }
+        }
+
+        json = await self.update_device_params(payload)
+
+        return self._check_result(json)
+
+    async def set_state(self, uid: str, state: int) -> bool:
+        payload = {
+            "uid": uid,
+            "params": {
+                "state": state
+            }
+        }
+
+        json = await self.update_device_params(payload)
+
+        return self._check_result(json)
+
+    @staticmethod
+    def _check_result(json) -> bool:
+        return json["result"] == "1"

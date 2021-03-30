@@ -2,46 +2,38 @@
 import logging
 
 import voluptuous as vol
-import uuid
 
-from homeassistant import config_entries, core
-from homeassistant.helpers.aiohttp_client import async_get_clientsession
+from homeassistant import config_entries, core, exceptions
+from homeassistant.const import CONF_HOST, CONF_USERNAME, CONF_PASSWORD
 
 from .const import DOMAIN, HOST_RUSKLIMAT, APPCODE_ELECTROLUX, DEFAULT_NAME
-from .rusclimatapi import RusclimatApi, InvalidAuth, CannotConnect
+from .rusclimatapi import RusclimatApi
 
 _LOGGER = logging.getLogger(__name__)
 
-STEP_USER_DATA_SCHEMA = vol.Schema({"username": str, "password": str})
+STEP_USER_DATA_SCHEMA = vol.Schema({
+    vol.Required(CONF_USERNAME): str,
+    vol.Required(CONF_PASSWORD): str,
+    vol.Optional(CONF_HOST, default=HOST_RUSKLIMAT): str,
+    vol.Optional("appcode", default=APPCODE_ELECTROLUX): str,
+})
 
 
-async def validate_input(hass, data):
-    """Validate the user input allows us to connect.
+async def validate_input(hass: core.HomeAssistant, data: dict):
+    """Validate the user input allows us to connect."""
 
-    Data has the keys from STEP_USER_DATA_SCHEMA with values provided by the user.
-    """
-    # TODO validate the data can be used to set up a connection.
+    if len(data["host"]) < 3:
+        raise InvalidHost
 
-    # If your PyPI package is not built with async, pass your methods
-    # to the executor:
-    # await hass.async_add_executor_job(
-    #     your_validate_func, data["username"], data["password"]
-    # )
+    api = RusclimatApi(data["host"], data["username"], data["password"], data["appcode"])
 
-    session = async_get_clientsession(hass)
-    api = RusclimatApi(session, HOST_RUSKLIMAT)
-    result = await api.login(data["username"], data["password"], APPCODE_ELECTROLUX)
+    try:
+        json = await api.login()
+    except Exception:
+        raise CannotConnect
 
-    if not result:
+    if json["error_code"] != "0":
         raise InvalidAuth
-
-    # If you cannot connect:
-    # throw CannotConnect
-    # If the authentication is wrong:
-    # InvalidAuth
-
-    # Return info that you want to store in the config entry.
-    return {"title": "Convector"}
 
 
 class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
@@ -53,7 +45,6 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
     def __init__(self):
         """Initialize."""
-        self._unique_id = str(uuid.uuid4())
 
     async def async_step_user(self, user_input=None):
         """Handle the initial step."""
@@ -65,7 +56,7 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         errors = {}
 
         try:
-            info = await validate_input(self.hass, user_input)
+            await validate_input(self.hass, user_input)
         except CannotConnect:
             errors["base"] = "cannot_connect"
         except InvalidAuth:
@@ -74,9 +65,20 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             _LOGGER.exception("Unexpected exception")
             errors["base"] = "unknown"
         else:
-            await self.async_set_unique_id(self._unique_id)
-            return self.async_create_entry(title=info["title"], data=user_input)
+            return self.async_create_entry(title="Electrolux remote", data=user_input)
 
         return self.async_show_form(
             step_id="user", data_schema=STEP_USER_DATA_SCHEMA, errors=errors
         )
+
+
+class CannotConnect(exceptions.HomeAssistantError):
+    """Error to indicate we cannot connect."""
+
+
+class InvalidAuth(exceptions.HomeAssistantError):
+    """Error to indicate there is an invalid auth."""
+
+
+class InvalidHost(exceptions.HomeAssistantError):
+    """Error to indicate there is an invalid host."""

@@ -5,7 +5,6 @@ import asyncio
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from .const import DOMAIN, PLATFORMS, HOST_RUSKLIMAT
 from .rusclimatapi import RusclimatApi
 
@@ -13,9 +12,8 @@ _LOGGER = logging.getLogger(__name__)
 
 
 async def async_setup(hass: HomeAssistant, config: dict):
-    """Set up the test_app component."""
-
-    _LOGGER.debug("async_setup")
+    """Set up the Electrolux component."""
+    _LOGGER.info("Set up of integration %s", DOMAIN)
 
     hass.data.setdefault(DOMAIN, {})
 
@@ -24,14 +22,11 @@ async def async_setup(hass: HomeAssistant, config: dict):
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
     """Set up test_app from a config entry."""
-    # TODO Store an API object for your platforms to access
-    # hass.data[DOMAIN][entry.entry_id] = MyApi(...)
 
-    _LOGGER.debug("async_setup_entry.init")
-    _LOGGER.debug(entry)
+    # hass.data[DOMAIN][entry.entry_id] = RusclimatApi(entry.data["host"])
 
     for platform in PLATFORMS:
-        _LOGGER.info("Added new entity, entry_id: %s", entry.entry_id)
+        _LOGGER.info("Added new entity: %s, entry_id: %s", entry.title, entry.entry_id)
 
         hass.async_create_task(
             hass.config_entries.async_forward_entry_setup(entry, platform)
