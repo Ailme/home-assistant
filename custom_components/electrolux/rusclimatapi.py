@@ -1,10 +1,19 @@
 """Adds Support for Electrolux Convector"""
-import asyncio
+
 import logging
 
 from aiohttp import ClientSession
 
-from .const import API_LOGIN, API_SET_DEVICE_PARAMS, LANG
+from .const import LANG
+from .api_const import (
+    API_LOGIN,
+    API_SET_DEVICE_PARAMS,
+    API_GET_DEVICE_PARAMS,
+    ERROR_USER_NOT_FOUND,
+    ERROR_DEVICE_UNAVAILABLE,
+    ERROR_INCORRECT_LOGIN_OR_PASSWORD,
+)
+from .exception import InvalidAuth, InvalidResponse, UserNotFound, DeviceUnavailable, EnexpectedError
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -18,19 +27,18 @@ class RusclimatApi:
         self._password = password
         self._appcode = appcode
         self._token = None
-        self._data = {}
         self.session = None
 
     def __del__(self):
         _LOGGER.debug('Destructor called.')
         self.session.close()
 
-    def create_session(self):
+    def _create_session(self):
         self.session = ClientSession()
 
-    async def request(self, url: str, payload: dict):
+    async def _request(self, url: str, payload: dict):
         if self.session is None or self.session.closed:
-            self.create_session()
+            self._create_session()
 
         headers = {
             "lang": LANG,
@@ -46,13 +54,12 @@ class RusclimatApi:
         _LOGGER.debug(json)
 
         if json is None:
-            _LOGGER.error(f"Request error: json is None")
-            return {}
+            raise InvalidResponse(f"Response error: json is None")
 
         return json
 
     async def login(self):
-        """Login"""
+        """Auth on server"""
 
         payload = {
             "login": self._username,
@@ -60,14 +67,21 @@ class RusclimatApi:
             "appcode": self._appcode
         }
 
-        json = await self.request(API_LOGIN, payload)
+        json = await self._request(API_LOGIN, payload)
+
+        if json["error_code"] == ERROR_USER_NOT_FOUND:
+            raise UserNotFound(json["error_message"])
+        elif json["error_code"] == ERROR_INCORRECT_LOGIN_OR_PASSWORD:
+            raise InvalidAuth(json["error_message"])
+        elif json["error_code"] != "0":
+            _LOGGER.exception(f"message: '{json['error_message']}'; code: {json['error_code']}")
+            raise InvalidAuth(json["error_message"])
 
         self._token = json["result"]["token"]
-        self._data = json["result"]["device"]
 
         return json
 
-    async def update_device_params(self, params: dict):
+    async def _update_device_params(self, params: dict):
         if self._token is None:
             await self.login()
 
@@ -76,9 +90,32 @@ class RusclimatApi:
             "device": [params]
         }
 
-        json = await self.request(API_SET_DEVICE_PARAMS, payload)
+        json = await self._request(API_SET_DEVICE_PARAMS, payload)
+
+        if json["error_code"] == ERROR_DEVICE_UNAVAILABLE:
+            raise DeviceUnavailable(json["error_message"])
+
+        self._check_response_code(json)
 
         return json
+
+    async def get_device_params(self, uid: str):
+        if self._token is None:
+            await self.login()
+
+        payload = {
+            "token": self._token,
+            "uid": [uid]
+        }
+
+        json = await self._request(API_GET_DEVICE_PARAMS, payload)
+
+        if json["error_code"] == ERROR_DEVICE_UNAVAILABLE:
+            raise DeviceUnavailable(json["error_message"])
+
+        self._check_response_code(json)
+
+        return json["result"]["device"]
 
     async def set_preset_mode(self, uid: str, mode: int) -> bool:
         payload = {
@@ -88,11 +125,11 @@ class RusclimatApi:
             }
         }
 
-        json = await self.update_device_params(payload)
+        json = await self._update_device_params(payload)
 
         return json["result"] == "1"
 
-    async def set_temperature(self, uid: str, temp: int) -> bool:
+    async def set_temperature(self, uid: str, temp: float) -> bool:
         payload = {
             "uid": uid,
             "params": {
@@ -100,7 +137,7 @@ class RusclimatApi:
             }
         }
 
-        json = await self.update_device_params(payload)
+        json = await self._update_device_params(payload)
 
         return self._check_result(json)
 
@@ -112,9 +149,15 @@ class RusclimatApi:
             }
         }
 
-        json = await self.update_device_params(payload)
+        json = await self._update_device_params(payload)
 
         return self._check_result(json)
+
+    @staticmethod
+    def _check_response_code(json):
+        if json["error_code"] != "0":
+            _LOGGER.exception(f"message: '{json['error_message']}'; code: {json['error_code']}")
+            raise EnexpectedError(json["error_message"])
 
     @staticmethod
     def _check_result(json) -> bool:

@@ -12,19 +12,6 @@ DEFAULT_MAX_TEMP = 35
 
 PLATFORMS = ["climate"]
 
-API_CHANGE_PASSWORD = "api/userChangePassword"
-API_CREATE_CALENDAR = "api/setTimeSlot"
-API_DELETE_DEVICE = "api/deleteDevice"
-API_DELETE_DEVICE_BY_TEMP_ID = "api/deleteDeviceByTempID"
-API_LOGIN = "api/userAuth"
-API_PUT_DEVICE = "api/putDevice"
-API_GET_DEVICE_PARAMS = "api/getDeviceParams"
-API_SET_DEVICE_PARAMS = "api/setDeviceParams"
-API_REGISTRATION = "api/userRegister"
-API_REMIND_PASSWORD = "api/userRemindPassword"
-API_SEND_CODE = "api/userRegister"
-API_UPDATE_CALENDAR_SLOTS = "api/setTimeSlot"
-
 ###
 # CONVECTOR CONST
 ###
@@ -57,8 +44,8 @@ TEMP_ANTIFROST_DEFAULT = 3
 HEAT_MODE_AUTO = 0
 HEAT_MODE_MANUAL = 1
 
-LED_MODE_AUTO = 0
-LED_MODE_PERMANENT = 1
+LED_MODE_PERMANENT = 0
+LED_MODE_AUTO = 1
 
 POWER_0 = 0
 POWER_1 = 1
@@ -68,3 +55,4 @@ POWER_4 = 4
 POWER_5 = 5
 
 TYPE_CONVECTOR_2 = "convector24"
+

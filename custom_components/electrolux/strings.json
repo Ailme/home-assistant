@@ -1,5 +1,6 @@
 {
   "title": "Electrolux integration",
+  "no_frost": "Anti Frost",
   "config": {
     "step": {
       "user": {

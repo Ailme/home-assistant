@@ -36,6 +36,7 @@ from homeassistant.const import (
     CONF_USERNAME,
     CONF_PASSWORD,
     TEMP_CELSIUS,
+    PRECISION_WHOLE,
 )
 
 from .const import (
@@ -65,38 +66,24 @@ HA_PRESET_TO_CONVECTOR = {PRESET_COMFORT: MODE_COMFORT, PRESET_ECO: MODE_ECO, PR
 CONVECTOR_PRESET_TO_HA = {v: k for k, v in HA_PRESET_TO_CONVECTOR.items()}
 
 
-async def async_setup_platform(hass: HomeAssistant, config: dict, async_add_entities, discovery_info=None):
-    _LOGGER.debug("climate.async_setup_platform")
-    _LOGGER.debug("climate.async_setup_platform.config")
-    _LOGGER.debug(config)
-
-    # session = async_get_clientsession(hass)
-    # api = RusclimatApi(session, HOST_RUSKLIMAT)
-    #
-    # await async_setup_reload_service(hass, DOMAIN, 'climate')
-    # async_add_entities([Convector(api)])
-
-    return True
-
-
 async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry, async_add_devices):
-    if config_entry.options != {}:
-        data = config_entry.options
-    else:
-        data = config_entry.data
-    _LOGGER.info("setup entity-config_entry_data=%s", data)
+    data = config_entry.options if config_entry.options != {} else config_entry.data
 
-    api = RusclimatApi(data["host"], data["username"], data["password"], data["appcode"])
+    api = RusclimatApi(
+        host=data["host"],
+        username=data["username"],
+        password=data["password"],
+        appcode=data["appcode"],
+    )
     json = await api.login()
 
     devices = []
-    for device in json["result"]["device"]:
-        print(device)
+    for deviceData in json["result"]["device"]:
+        _LOGGER.debug(deviceData)
 
-        if device["type"] == TYPE_CONVECTOR_2:
-            entity = Convector2Climate(device["uid"], api, device)
-            entity.update()
-            devices.append(entity)
+        if deviceData["type"] == TYPE_CONVECTOR_2:
+            device = Convector2Climate(Convector2(uid=deviceData["uid"], api=api, data=deviceData))
+            devices.append(device)
 
     async_add_devices(devices)
 
@@ -104,13 +91,13 @@ async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry, asyn
 class Convector2Climate(ClimateEntity):
     """Representation of an Climate."""
 
-    def __init__(self, uid: str, api: RusclimatApi, data: dict = None):
+    def __init__(self, device: Convector2):
         """Initialize"""
-        self._api = api
 
         self._icon = "mdi:radiator"
-        self._name = "convector_" + uid
-        self._uid = uid
+        self._device = device
+        self._name = "convector_" + device.uid
+        self._uid = device.uid
         self._min_temp = DEFAULT_MIN_TEMP
         self._max_temp = DEFAULT_MAX_TEMP
         self._current_temp = None
@@ -120,41 +107,21 @@ class Convector2Climate(ClimateEntity):
         self._preset = None
         self._current_state = -1
         self._current_operation = ""
+        self._target_temperature = None
 
-        self.update_from_json(data)
+        self._update()
 
-    def update(self):
-        """Update unit attributes."""
-        # self._api.update()
-        # self.data.update()
-        # self._current_setpoint = self.data.current_setpoint
-        # self._current_operation = self.data.current_operation
-        # self._current_temp = self.data.current_temp
-        # self._preset = CONVECTOR_PRESET_TO_HA.get(self.data.preset)
-        # self._heating = self.data.heating
+    def _update(self):
+        self._current_temp = self._device.current_temp
+        self._heating = self._device.state == STATE_ON
+        self._preset = CONVECTOR_PRESET_TO_HA.get(self._device.mode)
 
-    def update_from_json(self, data: dict):
-        """Update unit attributes."""
-        device = Convector2()
-        device.from_json(data)
-
-        self._current_temp = device.temp_comfort
-        self._heating = device.state
-
-        if device.mode == MODE_COMFORT:
-            self._target_temperature = device.temp_comfort
-        elif device.mode == MODE_ECO:
-            self._target_temperature = device.temp_comfort - device.delta_eco
-        elif device.mode == MODE_NO_FROST:
-            self._target_temperature = device.temp_antifrost
-        else:
-            self._target_temperature = 0
-
-    @staticmethod
-    def _get_float(value, default=None):
-        if value is not None:
-            return float(value)
-        return default
+        if self._device.mode == MODE_COMFORT:
+            self._target_temperature = self._device.temp_comfort
+        elif self._device.mode == MODE_ECO:
+            self._target_temperature = self._device.temp_comfort - self._device.delta_eco
+        elif self._device.mode == MODE_NO_FROST:
+            self._target_temperature = self._device.temp_antifrost
 
     @property
     def hvac_mode(self):
@@ -171,10 +138,9 @@ class Convector2Climate(ClimateEntity):
     async def async_set_hvac_mode(self, hvac_mode):
         """Set new target hvac mode."""
 
-        status = await self._api.set_state(self._uid, STATE_OFF if self._heating else STATE_ON)
-
-        if status:
-            self._heating = not self._heating
+        new_state = STATE_OFF if self._heating else STATE_ON
+        await self._device.set_state(new_state)
+        self._update()
 
     @property
     def hvac_action(self):
@@ -223,12 +189,12 @@ class Convector2Climate(ClimateEntity):
     @property
     def target_temperature(self):
         """Return the temperature we try to reach."""
-        return self._current_setpoint
+        return self._target_temperature
 
     @property
     def preset_mode(self):
         """Return the current preset mode, e.g., home, away, temp."""
-        return CONVECTOR_PRESET_TO_HA.get(self._preset)
+        return self._preset
 
     @property
     def preset_modes(self):
@@ -241,11 +207,8 @@ class Convector2Climate(ClimateEntity):
         if self._preset == preset_mode:
             return
 
-        convector_preset = HA_PRESET_TO_CONVECTOR.get(preset_mode, PRESET_COMFORT)
-        status = await self._api.set_preset_mode(self._uid, convector_preset)
-
-        if status:
-            self._preset = preset_mode
+        await self._device.set_mode(HA_PRESET_TO_CONVECTOR.get(preset_mode, PRESET_COMFORT))
+        self._update()
 
     async def async_set_temperature(self, **kwargs):
         """Set new target temperature."""
@@ -253,12 +216,14 @@ class Convector2Climate(ClimateEntity):
         target_temp = kwargs.get(ATTR_TEMPERATURE)
         if target_temp is None:
             return
-        else:
-            status = await self._api.set_temperature(self._uid, target_temp)
 
-        if status:
-            self._target_temperature = target_temp
+        await self._device.set_temp_comfort(target_temp)
+        self._update()
 
     @property
     def precision(self):
-        return 0
+        return PRECISION_WHOLE
+
+    async def async_update(self):
+        await self._device.update()
+        self._update()

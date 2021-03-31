@@ -21,12 +21,12 @@ async def async_setup(hass: HomeAssistant, config: dict):
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
-    """Set up test_app from a config entry."""
+    """Set up from a config entry."""
 
     # hass.data[DOMAIN][entry.entry_id] = RusclimatApi(entry.data["host"])
 
     for platform in PLATFORMS:
-        _LOGGER.info("Added new entity: %s, entry_id: %s", entry.title, entry.entry_id)
+        _LOGGER.info("Added new platform: %s, entry_id: %s", entry.title, entry.entry_id)
 
         hass.async_create_task(
             hass.config_entries.async_forward_entry_setup(entry, platform)

@@ -3,10 +3,11 @@ import logging
 
 import voluptuous as vol
 
-from homeassistant import config_entries, core, exceptions
+from homeassistant import config_entries, core
 from homeassistant.const import CONF_HOST, CONF_USERNAME, CONF_PASSWORD
 
-from .const import DOMAIN, HOST_RUSKLIMAT, APPCODE_ELECTROLUX, DEFAULT_NAME
+from .const import DOMAIN, HOST_RUSKLIMAT, APPCODE_ELECTROLUX
+from .exception import InvalidHost, CannotConnect, InvalidAuth, UserNotFound
 from .rusclimatapi import RusclimatApi
 
 _LOGGER = logging.getLogger(__name__)
@@ -25,15 +26,13 @@ async def validate_input(hass: core.HomeAssistant, data: dict):
     if len(data["host"]) < 3:
         raise InvalidHost
 
-    api = RusclimatApi(data["host"], data["username"], data["password"], data["appcode"])
-
-    try:
-        json = await api.login()
-    except Exception:
-        raise CannotConnect
-
-    if json["error_code"] != "0":
-        raise InvalidAuth
+    api = RusclimatApi(
+        host=data["host"],
+        username=data["username"],
+        password=data["password"],
+        appcode=data["appcode"],
+    )
+    await api.login()
 
 
 class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
@@ -59,10 +58,9 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             await validate_input(self.hass, user_input)
         except CannotConnect:
             errors["base"] = "cannot_connect"
-        except InvalidAuth:
+        except (InvalidAuth, UserNotFound):
             errors["base"] = "invalid_auth"
         except Exception:  # pylint: disable=broad-except
-            _LOGGER.exception("Unexpected exception")
             errors["base"] = "unknown"
         else:
             return self.async_create_entry(title="Electrolux remote", data=user_input)
@@ -72,13 +70,4 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         )
 
 
-class CannotConnect(exceptions.HomeAssistantError):
-    """Error to indicate we cannot connect."""
 
-
-class InvalidAuth(exceptions.HomeAssistantError):
-    """Error to indicate there is an invalid auth."""
-
-
-class InvalidHost(exceptions.HomeAssistantError):
-    """Error to indicate there is an invalid host."""
